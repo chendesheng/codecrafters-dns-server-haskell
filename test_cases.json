@@ -1,0 +1,7 @@
+[
+  {
+    "slug": "init",
+    "tester_log_prefix": "stage-1",
+    "title": "Stage #1: Setup UDP server"
+  }
+]
