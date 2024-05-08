@@ -7,7 +7,4 @@
 # DON'T EDIT THIS!
 set -e
 
-( cd $(dirname "$0") &&
-	cabal install --installdir . --overwrite-policy=always)
-
-exec "$(dirname $0)/hs-dns-server-exe" "$@"
+( cd $(dirname "$0") && cabal run hs-dns-server-exe -- "$@")
