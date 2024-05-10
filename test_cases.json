@@ -1,7 +1,27 @@
 [
   {
+    "slug": "parse-headers",
+    "tester_log_prefix": "stage-5",
+    "title": "Parse header section"
+  },
+  {
+    "slug": "write-headers",
+    "tester_log_prefix": "stage-2",
+    "title": "Write DNS header"
+  },
+  {
     "slug": "init",
     "tester_log_prefix": "stage-1",
     "title": "Stage #1: Setup UDP server"
+  },
+  {
+    "slug": "write-question-section",
+    "tester_log_prefix": "stage-3",
+    "title": "Write question section"
+  },
+  {
+    "slug": "write-answer-section",
+    "tester_log_prefix": "stage-4",
+    "title": "Write answer section"
   }
 ]
