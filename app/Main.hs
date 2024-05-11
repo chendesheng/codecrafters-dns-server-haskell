@@ -10,7 +10,7 @@ import Data.Bits (Bits (shiftR, (.&.), (.|.)), setBit, shiftL, testBit)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
-import Debug.Trace (trace)
+import Debug.Trace (trace, traceShow)
 import Network.UDP qualified as UDP
 import Numeric (showHex)
 
@@ -110,22 +110,27 @@ dnsMessageHeaderParser = do
             , _arcount = arcount
             }
 
-dnsMessageParser :: BG.Get DNSMessage
-dnsMessageParser = do
+{-
+>>> let input = "K\183\SOH\NUL\NUL\STX\NUL\NUL\NUL\NUL\NUL\NUL\ETXabc\DC1longassdomainname\ETXcom\NUL\NUL\SOH\NUL\SOH\ETXdef\192\DLE\NUL\SOH\NUL\SOH"
+>>> BG.runGet (dnsMessageParser input) input
+DNSMessage {_header = DNSHeader {_id = 19383, _qr = False, _opcode = 0, _aa = False, _tc = False, _rd = True, _ra = False, _z = 0, _rcode = 0, _qdcount = 2, _ancount = 0, _nscount = 0, _arcount = 0}, _questions = [DNSQuestion {_qname = "abc.longassdomainname.com", _qtype = 1, _qclass = 1},DNSQuestion {_qname = "def.longassdomainname.com", _qtype = 1, _qclass = 1}], _answers = []}
+-}
+dnsMessageParser :: ByteString -> BG.Get DNSMessage
+dnsMessageParser input = do
     header <- dnsMessageHeaderParser
-    questions <- many (fromIntegral $ _qdcount header) dnsQuestionParser
-    answer <- many (fromIntegral $ _ancount header) dnsResourceRecordParser
+    questions <- many (fromIntegral $ _qdcount $ header) (dnsQuestionParser input)
+    answer <- many (fromIntegral $ _ancount header) (dnsResourceRecordParser input)
     return $ DNSMessage header questions answer
   where
-    dnsQuestionParser :: BG.Get DNSQuestion
-    dnsQuestionParser = do
-        qname <- dnsNameParser
+    dnsQuestionParser :: ByteString -> BG.Get DNSQuestion
+    dnsQuestionParser input = do
+        qname <- dnsNameParser input
         qtype <- BG.getWord16be
         DNSQuestion qname qtype <$> BG.getWord16be
 
-    dnsResourceRecordParser :: BG.Get DNSResourceRecord
-    dnsResourceRecordParser = do
-        rname <- dnsNameParser
+    dnsResourceRecordParser :: ByteString -> BG.Get DNSResourceRecord
+    dnsResourceRecordParser input = do
+        rname <- dnsNameParser input
         rtype <- BG.getWord16be
         rclass <- BG.getWord16be
         ttl <- BG.getWord32be
@@ -139,18 +144,54 @@ dnsMessageParser = do
                 ttl
                 rdata
 
-    dnsNameParser :: BG.Get ByteString
-    dnsNameParser = do
+    dnsLabelParser :: ByteString -> BG.Get ByteString
+    dnsLabelParser input = do
         len <- BG.getWord8
         if len == 0
-            then return ""
-            else do
-                name <- BG.getByteString $ fromIntegral len
-                rest <- dnsNameParser
-                if BS.null rest then pure name else pure $ name <> "." <> rest
+            then pure ""
+            else
+                if (len .&. 0xC0) == 0xC0
+                    then do
+                        offset <- BG.getWord8
+                        let offset' = (((fromIntegral :: Word8 -> Word16) len .&. 0x3F) `shiftL` 8) .|. fromIntegral offset
+                        pure $
+                            BG.runGet
+                                ( do
+                                    BG.skip $ fromIntegral offset'
+                                    dnsNameParser input
+                                )
+                                (BSL.fromStrict input)
+                    else do
+                        BG.getByteString $ fromIntegral len
 
-    many :: Int -> BG.Get a -> BG.Get [a]
-    many 0 _ = return []
+    dnsNameParser :: ByteString -> BG.Get ByteString
+    dnsNameParser input = do
+        len <- BG.getWord8
+        if len == 0
+            then pure ""
+            else
+                if (len .&. 0xC0) == 0xC0
+                    then do
+                        offset <- BG.getWord8
+                        let offset' = (((fromIntegral :: Word8 -> Word16) len .&. 0x3F) `shiftL` 8) .|. fromIntegral offset
+                        pure $
+                            BG.runGet
+                                ( do
+                                    BG.skip $ fromIntegral offset'
+                                    dnsNameParser input
+                                )
+                                (BSL.fromStrict input)
+                    else do
+                        label <- BG.getByteString $ fromIntegral len
+                        rest <- dnsNameParser input
+                        if BS.null rest
+                            then
+                                pure label
+                            else
+                                pure $ label <> "." <> rest
+
+    many :: (Show a) => Int -> BG.Get a -> BG.Get [a]
+    many 0 _ = pure []
     many n p = do
         empty <- BG.isEmpty
         if empty
@@ -220,8 +261,8 @@ main = do
     sock <- UDP.serverSocket ("127.0.0.1", 2053)
     putStrLn "Server started"
     forever $ do
-        (r, clientSock) <- UDP.recvFrom sock
-        let inputMessage = BG.runGet dnsMessageParser $ BSL.fromStrict r
+        (input, clientSock) <- UDP.recvFrom sock
+        let inputMessage = BG.runGet (dnsMessageParser input) $ BSL.fromStrict input
         let inputHeader = _header inputMessage
         let message =
                 DNSMessage

@@ -1,5 +1,10 @@
 [
   {
+    "slug": "parse-compressed-packet",
+    "tester_log_prefix": "stage-7",
+    "title": "Parse DNS packet with compressed labels"
+  },
+  {
     "slug": "parse-question",
     "tester_log_prefix": "stage-6",
     "title": "Parse question section"
