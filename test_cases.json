@@ -1,5 +1,10 @@
 [
   {
+    "slug": "parse-question",
+    "tester_log_prefix": "stage-6",
+    "title": "Parse question section"
+  },
+  {
     "slug": "parse-headers",
     "tester_log_prefix": "stage-5",
     "title": "Parse header section"

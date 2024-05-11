@@ -80,8 +80,8 @@ data DNSResourceRecord = DNSResourceRecord
 
 data DNSMessage = DNSMessage
     { _header :: DNSHeader
-    , _question :: [DNSQuestion]
-    , _answer :: [DNSResourceRecord]
+    , _questions :: [DNSQuestion]
+    , _answers :: [DNSResourceRecord]
     }
     deriving (Show, Eq)
 
@@ -221,39 +221,48 @@ main = do
     putStrLn "Server started"
     forever $ do
         (r, clientSock) <- UDP.recvFrom sock
-        let header = BG.runGet dnsMessageHeaderParser $ BSL.fromStrict r
+        let inputMessage = BG.runGet dnsMessageParser $ BSL.fromStrict r
+        let inputHeader = _header inputMessage
         let message =
                 DNSMessage
                     ( DNSHeader
-                        { _id = _id header
+                        { _id = _id inputHeader
                         , _qr = True
-                        , _opcode = _opcode header
+                        , _opcode = _opcode inputHeader
                         , _aa = False
                         , _tc = False
-                        , _rd = _rd header
+                        , _rd = _rd inputHeader
                         , _ra = False
                         , _z = 0
-                        , _rcode = if _opcode header == 0 then 0 else 4
-                        , _qdcount = 1
-                        , _ancount = 1
+                        , _rcode = if _opcode inputHeader == 0 then 0 else 4
+                        , _qdcount = fromIntegral $ length $ _questions inputMessage
+                        , _ancount = fromIntegral $ length $ _questions inputMessage
                         , _nscount = 0
                         , _arcount = 0
                         }
                     )
-                    [ DNSQuestion
-                        { _qname = "codecrafters.io"
-                        , _qtype = fromIntegral $ fromEnum A
-                        , _qclass = fromIntegral $ fromEnum IN
-                        }
-                    ]
-                    [ DNSResourceRecord
-                        { _rname = "codecrafters.io"
-                        , _rtype = fromIntegral $ fromEnum A
-                        , _rclass = fromIntegral $ fromEnum IN
-                        , _ttl = 60
-                        , _rdata = BS.pack [8, 8, 8, 8]
-                        }
-                    ]
+                    ( fmap
+                        ( \(DNSQuestion name _ _) ->
+                            DNSQuestion
+                                { _qname = name
+                                , _qtype = fromIntegral $ fromEnum A
+                                , _qclass = fromIntegral $ fromEnum IN
+                                }
+                        )
+                        (_questions inputMessage)
+                    )
+                    ( fmap
+                        ( \(DNSQuestion{_qname = name}) ->
+                            DNSResourceRecord
+                                { _rname = name
+                                , _rtype = fromIntegral $ fromEnum A
+                                , _rclass = fromIntegral $ fromEnum IN
+                                , _ttl = 60
+                                , _rdata = BS.pack [8, 8, 8, 8]
+                                }
+                        )
+                        (_questions inputMessage)
+                    )
         let resp = encodeDnsMessage message
         -- print $ BG.runGet dnsMessageParser (BSL.fromStrict resp)
         -- print message
