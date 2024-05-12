@@ -2,3 +2,4 @@ dist-newstyle/
 .DS_Store
 dist/
 hs-dns-server-exe
+tags

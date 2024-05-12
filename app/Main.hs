@@ -86,6 +86,9 @@ data DNSMessage = DNSMessage
     }
     deriving (Show, Eq)
 
+{-
+ >>> aaa
+-}
 dnsMessageHeaderParser :: BG.Get DNSHeader
 dnsMessageHeaderParser = do
     id <- BG.getWord16be
@@ -119,7 +122,7 @@ DNSMessage {_header = DNSHeader {_id = 19383, _qr = False, _opcode = 0, _aa = Fa
 dnsMessageParser :: ByteString -> BG.Get DNSMessage
 dnsMessageParser input = do
     header <- dnsMessageHeaderParser
-    questions <- many (fromIntegral $ _qdcount $ header) (dnsQuestionParser input)
+    questions <- many (fromIntegral $ _qdcount header) (dnsQuestionParser input)
     answer <- many (fromIntegral $ _ancount header) (dnsResourceRecordParser input)
     return $ DNSMessage header questions answer
   where
@@ -186,10 +189,8 @@ dnsMessageParser input = do
                         label <- BG.getByteString $ fromIntegral len
                         rest <- dnsNameParser input
                         if BS.null rest
-                            then
-                                pure label
-                            else
-                                pure $ label <> "." <> rest
+                            then pure label
+                            else pure $ label <> "." <> rest
 
     many :: (Show a) => Int -> BG.Get a -> BG.Get [a]
     many 0 _ = pure []
