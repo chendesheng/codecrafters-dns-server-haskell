@@ -1,5 +1,10 @@
 [
   {
+    "slug": "forwarding-server",
+    "tester_log_prefix": "stage-8",
+    "title": "Forwarding Server"
+  },
+  {
     "slug": "parse-compressed-packet",
     "tester_log_prefix": "stage-7",
     "title": "Parse DNS packet with compressed labels"

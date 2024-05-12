@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Control.Monad (forever)
+import Control.Monad (foldM, forever)
 import Data.Binary (Word16, Word32, Word8)
 import Data.Binary.Get qualified as BG
 import Data.Binary.Put qualified as BP
@@ -13,6 +13,7 @@ import Data.ByteString.Lazy qualified as BSL
 import Debug.Trace (trace, traceShow)
 import Network.UDP qualified as UDP
 import Numeric (showHex)
+import System.Environment (getArgs)
 
 traceS :: (Show a) => String -> a -> a
 traceS s a = trace (s <> ": " <> show a) a
@@ -256,62 +257,100 @@ encodeDnsMessage = BSL.toStrict . BP.runPut . dnsMessageBuilder
             parts
         BP.putWord8 0
 
+createClient :: String -> IO UDP.UDPSocket
+createClient address =
+    let (host, _ : port) = break (== ':') address
+     in UDP.clientSocket host port False
+
+parseDNSMessage :: ByteString -> DNSMessage
+parseDNSMessage input =
+    BG.runGet (dnsMessageParser input) $ BSL.fromStrict input
+
+sendAndRecv :: UDP.UDPSocket -> DNSMessage -> IO DNSMessage
+sendAndRecv sock req = do
+    UDP.send sock $ encodeDnsMessage req
+    resp <- UDP.recv sock
+    pure $ parseDNSMessage resp
+
 main :: IO ()
 main = do
     sock <- UDP.serverSocket ("127.0.0.1", 2053)
     putStrLn "Server started"
-    forever $ do
-        (input, clientSock) <- UDP.recvFrom sock
-        let inputMessage = BG.runGet (dnsMessageParser input) $ BSL.fromStrict input
-        let inputHeader = _header inputMessage
-        let message =
-                DNSMessage
-                    ( DNSHeader
-                        { _id = _id inputHeader
-                        , _qr = True
-                        , _opcode = _opcode inputHeader
-                        , _aa = False
-                        , _tc = False
-                        , _rd = _rd inputHeader
-                        , _ra = False
-                        , _z = 0
-                        , _rcode = if _opcode inputHeader == 0 then 0 else 4
-                        , _qdcount = fromIntegral $ length $ _questions inputMessage
-                        , _ancount = fromIntegral $ length $ _questions inputMessage
-                        , _nscount = 0
-                        , _arcount = 0
-                        }
-                    )
-                    ( fmap
-                        ( \(DNSQuestion name _ _) ->
-                            DNSQuestion
-                                { _qname = name
-                                , _qtype = fromIntegral $ fromEnum A
-                                , _qclass = fromIntegral $ fromEnum IN
+    args <- getArgs
+    case args of
+        ["--resolver", address] ->
+            forever $ do
+                (input, clientSock) <- UDP.recvFrom sock
+                let inputMessage = parseDNSMessage input
+                forwardServerClient <- createClient address
+                answers <-
+                    reverse
+                        <$> foldM
+                            ( \answers question -> do
+                                let h = _header inputMessage
+                                -- FIXME: Do we need handle id here? because UDP packet might not in order
+                                let h' = h{_qdcount = 1}
+                                resp <- sendAndRecv forwardServerClient (DNSMessage h' [question] [])
+                                pure $ head (_answers resp) : answers
+                            )
+                            []
+                            (_questions inputMessage)
+                let h = _header inputMessage
+                let h' = h{_ancount = fromIntegral $ length answers, _qr = True}
+                UDP.sendTo sock (encodeDnsMessage $ inputMessage{_header = h', _answers = answers}) clientSock
+        _ ->
+            forever $ do
+                (input, clientSock) <- UDP.recvFrom sock
+                let inputMessage = parseDNSMessage input
+                let inputHeader = _header inputMessage
+                let message =
+                        DNSMessage
+                            ( DNSHeader
+                                { _id = _id inputHeader
+                                , _qr = True
+                                , _opcode = _opcode inputHeader
+                                , _aa = False
+                                , _tc = False
+                                , _rd = _rd inputHeader
+                                , _ra = False
+                                , _z = 0
+                                , _rcode = if _opcode inputHeader == 0 then 0 else 4
+                                , _qdcount = fromIntegral $ length $ _questions inputMessage
+                                , _ancount = fromIntegral $ length $ _questions inputMessage
+                                , _nscount = 0
+                                , _arcount = 0
                                 }
-                        )
-                        (_questions inputMessage)
-                    )
-                    ( fmap
-                        ( \(DNSQuestion{_qname = name}) ->
-                            DNSResourceRecord
-                                { _rname = name
-                                , _rtype = fromIntegral $ fromEnum A
-                                , _rclass = fromIntegral $ fromEnum IN
-                                , _ttl = 60
-                                , _rdata = BS.pack [8, 8, 8, 8]
-                                }
-                        )
-                        (_questions inputMessage)
-                    )
-        let resp = encodeDnsMessage message
-        -- print $ BG.runGet dnsMessageParser (BSL.fromStrict resp)
-        -- print message
-        -- print $ prettyPrint $ encodeDnsMessage $ BG.runGet dnsMessageParser $ BSL.fromStrict resp
-        -- print $ prettyPrint resp
-        -- error "error"
-        -- error $ show header
-        UDP.sendTo sock resp clientSock
+                            )
+                            ( fmap
+                                ( \(DNSQuestion name _ _) ->
+                                    DNSQuestion
+                                        { _qname = name
+                                        , _qtype = fromIntegral $ fromEnum A
+                                        , _qclass = fromIntegral $ fromEnum IN
+                                        }
+                                )
+                                (_questions inputMessage)
+                            )
+                            ( fmap
+                                ( \(DNSQuestion{_qname = name}) ->
+                                    DNSResourceRecord
+                                        { _rname = name
+                                        , _rtype = fromIntegral $ fromEnum A
+                                        , _rclass = fromIntegral $ fromEnum IN
+                                        , _ttl = 60
+                                        , _rdata = BS.pack [8, 8, 8, 8]
+                                        }
+                                )
+                                (_questions inputMessage)
+                            )
+                let resp = encodeDnsMessage message
+                -- print $ BG.runGet dnsMessageParser (BSL.fromStrict resp)
+                -- print message
+                -- print $ prettyPrint $ encodeDnsMessage $ BG.runGet dnsMessageParser $ BSL.fromStrict resp
+                -- print $ prettyPrint resp
+                -- error "error"
+                -- error $ show header
+                UDP.sendTo sock resp clientSock
 
 prettyPrint :: ByteString -> String
 prettyPrint = concatMap (`showHex` "") . BS.unpack
